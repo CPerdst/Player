@@ -1,6 +1,10 @@
 #include "packetqueue.h"
 #include "QDebug"
 
+extern "C"{
+#include "libavutil/time.h"
+}
+
 PakcetQueue::PakcetQueue():
     m_packet_size(0),
     m_packet_all_size(0),

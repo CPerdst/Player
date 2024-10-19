@@ -5,17 +5,13 @@
 #include <QImage>
 #include "framequeue.h"
 #include "packetqueue.h"
+#include <mutex>
+#include <condition_variable>
 
 extern "C"
 {
 #include "libavcodec/avcodec.h"
 #include "libavformat/avformat.h"
-#include "libswscale/swscale.h"
-#include "libswresample/swresample.h"
-#include "libavdevice/avdevice.h"
-#include "libavutil/time.h"
-#include "libavutil/pixfmt.h"
-#include "libavutil/imgutils.h"
 #include "SDL.h"
 }
 
@@ -24,7 +20,8 @@ extern "C"
 
 enum VideoState {
     PLAYING = 1,
-    STOPING = 2
+    STOPING = 2,
+    NO_FILE_LOADED = 3
 };
 
 class mediaplayer : public QThread
@@ -98,6 +95,10 @@ public:
 
     int video_stream_idx() const;
 
+    void setState(const VideoState &state);
+
+    void notifyMeidaPlayThread();
+
 protected:
     void run() override;
 
@@ -105,7 +106,7 @@ private:
     QString m_file_path;
     //    bool m_playing;
     //    bool m_stop;
-    VideoState m_state;
+    VideoState m_state; // 只有stop按钮会访问以及设置，不需要锁
     bool m_is_register_all;
     bool m_video_flag;
     bool m_audio_flag;
@@ -150,6 +151,15 @@ private:
      */
     long long m_all_video_samples_count; // 记录媒体文件中音频样本总数（相当于总时间）
     long long m_play_samples_count; // 记录当前播放样本总数（用于维护音频时钟）
+
+    /**
+     * 用于同步媒体包提取线程
+     *
+     * @brief m_media_player_mtx
+     * @brief m_media_player_cond
+     */
+    std::mutex m_media_player_mtx;
+    std::condition_variable m_media_player_cond;
 };
 
 #endif // MEDIAPLAYER_H

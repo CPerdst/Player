@@ -24,9 +24,11 @@ HEADERS += \
 FORMS += \
     playerdialog.ui
 
-INCLUDEPATH += $$PWD/ffmpeg-4.2.2/include \
-    $$PWD/SDL2-2.0.10/include \
+# INCLUDEPATH += $$PWD/ffmpeg-4.2.2/include \
+#     $$PWD/SDL2-2.0.10/include \
 
+INCLUDEPATH += $$PWD/ffmpeg-4.2.2/include \
+      $$PWD/SDL2-2.0.10/include
 
 LIBS += $$PWD/ffmpeg-4.2.2/lib/avcodec.lib\
      $$PWD/ffmpeg-4.2.2/lib/avdevice.lib\

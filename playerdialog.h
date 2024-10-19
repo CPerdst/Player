@@ -34,6 +34,8 @@ private slots:
     void on_hslider_process_sliderPressed();
     void on_hslider_process_sliderReleased();
 
+    void on_pb_stop_clicked();
+
 private:
     Ui::PlayerDialog *ui;
     mediaplayer m_media_player;

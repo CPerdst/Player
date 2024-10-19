@@ -7,14 +7,7 @@
 
 extern "C"
 {
-#include "libavcodec/avcodec.h"
 #include "libavformat/avformat.h"
-#include "libswscale/swscale.h"
-#include "libavdevice/avdevice.h"
-#include "libavutil/time.h"
-#include "libavutil/pixfmt.h"
-#include "libavutil/imgutils.h"
-#include "SDL.h"
 }
 
 class FrameQueue

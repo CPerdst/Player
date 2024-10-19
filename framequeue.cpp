@@ -1,6 +1,11 @@
 #include "framequeue.h"
 #include "QDebug"
 
+extern "C"
+{
+#include "libavutil/time.h"
+}
+
 FrameQueue::FrameQueue():
     m_size(0),
     m_length(0)

@@ -3,6 +3,15 @@
 #include <QFileInfo>
 #include <QFileDialog>
 
+extern "C"{
+#include "libswscale/swscale.h"
+#include "libswresample/swresample.h"
+// #include "libavdevice/avdevice.h"
+#include "libavutil/time.h"
+#include "libavutil/pixfmt.h"
+#include "libavutil/imgutils.h"
+}
+
 SDL_AudioFormat av_format_to_sdl_formart(enum AVSampleFormat format){
     switch (format) {
         case AV_SAMPLE_FMT_U8: return AUDIO_U8;
@@ -70,7 +79,7 @@ void audio_callback_with_packet(void *userdata, Uint8 * stream, int len);
 void video_thread(mediaplayer* pThis);
 
 mediaplayer::mediaplayer()
-    : m_state(STOPING),
+    : m_state(NO_FILE_LOADED),
       m_is_register_all(false),
       m_video_flag(false),
       m_audio_flag(false),
@@ -356,6 +365,11 @@ void mediaplayer::play()
          }else{
              av_packet_unref(pkt);
          } */
+        // 首先需要查看是否已经暂停
+        {
+            std::unique_lock<std::mutex> lock(m_media_player_mtx);
+            m_media_player_cond.wait(lock, [&](){return m_state == PLAYING;});
+        }
         if(pkt->stream_index == m_video_stream_idx){
             // 将packet放入m_video_packet_queue中，然后视频线程会自动消费
             m_video_packet_queue.packet_queue_put(pkt);
@@ -431,6 +445,16 @@ void mediaplayer::run()
     m_state = PLAYING;
     // 开始播放
     play();
+}
+
+void mediaplayer::setState(const VideoState &state)
+{
+    m_state = state;
+}
+
+void mediaplayer::notifyMeidaPlayThread()
+{
+    m_media_player_cond.notify_one();
 }
 
 int mediaplayer::video_stream_idx() const

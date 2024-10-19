@@ -27,7 +27,7 @@ PlayerDialog::PlayerDialog(QWidget *parent)
     time.setHMS(0, 0, 0);
     ui->lb_time_show->setText(time.toString());
     // 3、设置hslider_process的总位置(视频秒数)
-    ui->hslider_process->setDisabled(true);
+//    ui->hslider_process->setDisabled(true);
 
 }
 
@@ -53,7 +53,7 @@ void PlayerDialog::SLOT_receive_image(QImage image)
 {
     int w = this->ui->lb_show->width();
     int h = this->ui->lb_show->height();
-    QPixmap pixmap = QPixmap::fromImage(image.scaled(w, h, Qt::IgnoreAspectRatio));
+    QPixmap pixmap = QPixmap::fromImage(image.scaled(w, h, Qt::KeepAspectRatio));
     this->ui->lb_show->setPixmap(pixmap);
     return;
 }
@@ -62,6 +62,14 @@ void PlayerDialog::SLOT_receive_image(QImage image)
 void PlayerDialog::on_pb_play_clicked()
 {
     if(m_media_player.is_playing()){
+        return;
+    }
+    if(m_media_player.state() == STOPING){
+        // 设置播放器为PLAYING状态，并唤醒play线程
+        m_media_player.setState(PLAYING);
+        m_media_player.notifyMeidaPlayThread();
+        // 打开SDL音频
+        SDL_PauseAudio(0);
         return;
     }
     QFileInfo fileinfo(m_media_player.file_path());
@@ -73,6 +81,8 @@ void PlayerDialog::on_pb_play_clicked()
     }
     // 初始化相关av资源
     m_media_player.initialized();
+    // 设置标志位
+    m_media_player.setState(PLAYING);
     // 开始播放
     m_media_player.start();
 }
@@ -93,4 +103,18 @@ void PlayerDialog::on_hslider_process_sliderReleased()
 {
     qDebug() << "Slider released!";
     return;
+}
+
+void PlayerDialog::on_pb_stop_clicked()
+{
+    // 如果已经是STOPING状态，直接返回
+    if(m_media_player.state() == STOPING){
+        return;
+    }
+    // 否则就是正在播放
+    // 首先暂停音频
+    SDL_PauseAudio(1);
+    // 然后暂停生产者线程
+    // 设置标志
+    m_media_player.setState(STOPING);
 }
