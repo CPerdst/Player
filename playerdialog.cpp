@@ -18,6 +18,7 @@ PlayerDialog::PlayerDialog(QWidget *parent)
 
     // 初始化控件
     // 1、设置lb_show为全黑背景
+    qDebug() << ui->lb_show->width() << " " << ui->lb_show->height();
     QImage background = QImage(ui->lb_show->width(), ui->lb_show->height(), QImage::Format::Format_RGB32);
     background.fill(Qt::black);
     emit m_media_player.SIG_send_image(background);
