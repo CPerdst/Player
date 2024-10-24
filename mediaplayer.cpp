@@ -860,6 +860,10 @@ void audio_callback_with_packet(void *userdata, Uint8 * stream, int len){
     Uint8* audio_buffer = pThis->audio_buffer();
     int per_sample_size = av_get_bytes_per_sample(pThis->codec_context_audio()->sample_fmt) * pThis->codec_context_audio()->channels;
     while(len){
+        if(pThis->pause_flag()){
+            memset(stream, 0, len);
+            break;
+        }
         if(pThis->audio_buffer_cur() >= pThis->audio_buffer_size()){
             // 如果音频缓冲区没有可用数据了，则解码新数据
             decode_size = decode_audio_packet(pThis, audio_buffer);

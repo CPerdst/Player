@@ -7,6 +7,7 @@
 #include "packetqueue.h"
 #include <mutex>
 #include <condition_variable>
+#include "thread"
 
 extern "C"
 {
@@ -98,12 +99,14 @@ public:
         PlayState(mediaplayer* pThis): MediaPlayerState(pThis){};
         int select(std::string filepath) override{
             pThis->setRun_flag(false);
-            while(!pThis->run_flag()){
-                av_usleep(25000);
-            }
-            QString path = QString::fromStdString(filepath);
-            pThis->setFile_path(path);
-            pThis->setState(new FileLoadedState(pThis));
+            std::async(std::launch::async, [&](){
+                while(!pThis->run_flag()){
+                    av_usleep(25000);
+                }
+                QString path = QString::fromStdString(filepath);
+                pThis->setFile_path(path);
+                pThis->setState(new FileLoadedState(pThis));
+            });
             return 0;
         };
         int end() override{
@@ -133,12 +136,14 @@ public:
         int select(std::string filepath) override{
             pThis->setPause_flag(false);
             pThis->setRun_flag(false);
-            while(!pThis->run_flag()){
-                av_usleep(25000);
-            }
-            QString path = QString::fromStdString(filepath);
-            pThis->setFile_path(path);
-            pThis->setState(new FileLoadedState(pThis));
+            std::async(std::launch::async, [&](){
+                while(!pThis->run_flag()){
+                    av_usleep(25000);
+                };
+                QString path = QString::fromStdString(filepath);
+                pThis->setFile_path(path);
+                pThis->setState(new FileLoadedState(pThis));
+            });
             return 0;
         };
     };
