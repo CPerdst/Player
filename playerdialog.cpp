@@ -4,6 +4,10 @@
 #include <QDebug>
 #include "QTime"
 
+extern "C"{
+#include "libavutil/time.h"
+}
+
 PlayerDialog::PlayerDialog(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::PlayerDialog)
@@ -15,9 +19,12 @@ PlayerDialog::PlayerDialog(QWidget *parent)
     // 信号槽连接
     // 1、媒体控制模块发送解码好的视频图像 -> 显示图像到lb_show控件
     connect(&m_media_player, SIGNAL(SIG_send_image(QImage)), this, SLOT(SLOT_receive_image(QImage)));
+    // 2、QTimer计时器打印播放器成员变量
+    connect(&m_timer, SIGNAL(timeout()), this, SLOT(SLOT_update_variables()));
 
     // 初始化控件
     // 1、设置lb_show为全黑背景
+    ui->lb_show->setScaledContents(true);
     qDebug() << ui->lb_show->width() << " " << ui->lb_show->height();
     QImage background = QImage(ui->lb_show->width(), ui->lb_show->height(), QImage::Format::Format_RGB32);
     background.fill(Qt::black);
@@ -28,6 +35,8 @@ PlayerDialog::PlayerDialog(QWidget *parent)
     ui->lb_time_show->setText(time.toString());
     // 3、设置hslider_process的总位置(视频秒数)
 //    ui->hslider_process->setDisabled(true);
+    // 4、开启计时器,10毫秒
+    m_timer.start(10);
 
 }
 
@@ -38,15 +47,15 @@ PlayerDialog::~PlayerDialog()
 
 void PlayerDialog::on_pb_select_clicked()
 {
-    // 首先判断mediaplayer是否正在播放视频
-    if(m_media_player.is_playing()){
-        // 如果正在播放媒体文件，关闭并重置标志位并清理资源
-        m_media_player.clear_recourse();
+    QString tmp_filepath;
+    tmp_filepath = QFileDialog::getOpenFileName(nullptr, nullptr, nullptr);
+    QFileInfo fileinfo = QFileInfo(tmp_filepath);
+    if(tmp_filepath.isNull() || \
+            tmp_filepath.isEmpty() || \
+            !fileinfo.isFile()){
+        return;
     }
-    // 选择音频文件
-    QString path = QFileDialog::getOpenFileName();
-    qDebug() << path;
-    m_media_player.setFile_path(path);
+    m_media_player.media_player_state()->select(tmp_filepath.toStdString());
 }
 
 void PlayerDialog::SLOT_receive_image(QImage image)
@@ -61,30 +70,19 @@ void PlayerDialog::SLOT_receive_image(QImage image)
 
 void PlayerDialog::on_pb_play_clicked()
 {
-    if(m_media_player.is_playing()){
+    if(dynamic_cast<mediaplayer::NoFileLoadedState*>(m_media_player.media_player_state().get())){
+        QString tmp_filepath;
+        tmp_filepath = QFileDialog::getOpenFileName(nullptr, nullptr, nullptr);
+        QFileInfo fileinfo = QFileInfo(tmp_filepath);
+        if(tmp_filepath.isNull() || \
+                tmp_filepath.isEmpty() || \
+                !fileinfo.isFile()){
+            return;
+        }
+        m_media_player.media_player_state()->play(tmp_filepath.toStdString());
         return;
     }
-    if(m_media_player.state() == STOPING){
-        // 设置播放器为PLAYING状态，并唤醒play线程
-        m_media_player.setState(PLAYING);
-        m_media_player.notifyMeidaPlayThread();
-        // 打开SDL音频
-        SDL_PauseAudio(0);
-        return;
-    }
-    QFileInfo fileinfo(m_media_player.file_path());
-    if(m_media_player.file_path().isEmpty() ||
-            !fileinfo.exists() || !fileinfo.isFile()){
-        // 如果m_file_path是空的，或者不存在，或者不是一个文件而是一个目录，那就重新选择一个文件
-        QString tmp_file_path = QFileDialog::getOpenFileName(nullptr, nullptr, nullptr, nullptr);
-        m_media_player.setFile_path(tmp_file_path);
-    }
-    // 初始化相关av资源
-    m_media_player.initialized();
-    // 设置标志位
-    m_media_player.setState(PLAYING);
-    // 开始播放
-    m_media_player.start();
+    m_media_player.media_player_state()->play();
 }
 
 void PlayerDialog::on_hslider_process_sliderMoved(int position)
@@ -107,14 +105,26 @@ void PlayerDialog::on_hslider_process_sliderReleased()
 
 void PlayerDialog::on_pb_stop_clicked()
 {
-    // 如果已经是STOPING状态，直接返回
-    if(m_media_player.state() == STOPING){
-        return;
+    m_media_player.media_player_state()->pause();
+}
+
+void PlayerDialog::SLOT_update_variables()
+{
+    ui->lb_m_file_path->setText(QString("filepath: %1").arg(m_media_player.file_path()));
+
+    if(dynamic_cast<mediaplayer::NoFileLoadedState*>(m_media_player.media_player_state().get())){
+        ui->lb_m_state->setText(QString("state: %1").arg(QString("NoFileLoaded")));
+    }else if(dynamic_cast<mediaplayer::FileLoadedState*>(m_media_player.media_player_state().get())){
+        ui->lb_m_state->setText(QString("state: %1").arg(QString("FileLoaded")));
+    }else if(dynamic_cast<mediaplayer::PlayState*>(m_media_player.media_player_state().get())){
+        ui->lb_m_state->setText(QString("state: %1").arg(QString("Play")));
+    }else if(dynamic_cast<mediaplayer::PauseState*>(m_media_player.media_player_state().get())){
+        ui->lb_m_state->setText(QString("state: %1").arg(QString("Pause")));
     }
-    // 否则就是正在播放
-    // 首先暂停音频
-    SDL_PauseAudio(1);
-    // 然后暂停生产者线程
-    // 设置标志
-    m_media_player.setState(STOPING);
+    ui->lb_m_video_flag->setText(QString("video_flag: %1").arg(m_media_player.video_flag()));
+    ui->lb_m_audio_flag->setText(QString("audio_flag: %1").arg(m_media_player.audio_flag()));
+    ui->lb_m_audio_buffer_size->setText(QString("audio_buffer_size: %1").arg(m_media_player.audio_buffer_size()));
+    ui->lb_m_audio_buffer_cur->setText(QString("audio_buffer_cur: %1").arg(m_media_player.audio_buffer_cur()));
+    ui->lb_m_all_video_samples_count->setText(QString("all_samples_count: %1").arg(m_media_player.all_video_samples_count()));
+    ui->lb_m_play_samples_count->setText(QString("play_samples_count: %1").arg(m_media_player.play_samples_count()));
 }

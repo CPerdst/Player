@@ -5,6 +5,7 @@
 #include "mediaplayer.h"
 #include "QImage"
 #include "functional"
+#include "QTimer"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class PlayerDialog; }
@@ -35,11 +36,14 @@ private slots:
     void on_hslider_process_sliderReleased();
 
     void on_pb_stop_clicked();
+    void SLOT_update_variables();
 
 private:
     Ui::PlayerDialog *ui;
     mediaplayer m_media_player;
     bool m_playing;
     std::function<void(void)> m_select_callbacks;
+    QTimer m_timer;
+
 };
 #endif // PLAYERDIALOG_H

@@ -12,16 +12,22 @@ extern "C"
 {
 #include "libavcodec/avcodec.h"
 #include "libavformat/avformat.h"
+#include "libavutil/time.h"
 #include "SDL.h"
 }
 
 #define MAX_AUDIO_BUFFER_LENGTH (48000 * 4 * 2)
 #define DEF_WANTED_SPEC_SAMPLES (1024)
 
+/// VideoState 已经废弃
 enum VideoState {
-    PLAYING = 1,
-    STOPING = 2,
-    NO_FILE_LOADED = 3
+    NO_FILE_LOADED = 1,
+    FILE_LOADED = 2,
+    PLAYING = 3,
+    STOPING = 4,
+    STOPED = 5,
+    EXITING = 6,
+    EXITED = 7
 };
 
 class mediaplayer : public QThread
@@ -31,15 +37,122 @@ signals:
     void SIG_send_image(QImage image);
 
 public:
+    class MediaPlayerState{
+    public:
+        MediaPlayerState(mediaplayer* pThis): pThis(pThis){};
+        virtual ~MediaPlayerState() = default;
+        virtual int play(){
+            return -1;
+        };
+        virtual int play(std::string filepath){
+            return -1;
+        };
+        virtual int pause(){
+            return -1;
+        };
+        virtual int select(std::string filepath){
+            return -1;
+        };
+        virtual int end(){
+            return -1;
+        };
+
+    protected:
+        mediaplayer* pThis;
+    };
+    class NoFileLoadedState: public MediaPlayerState{
+    public:
+        NoFileLoadedState(mediaplayer* pThis): MediaPlayerState(pThis){};
+        int select(std::string filepath) override{
+            QString path = QString::fromStdString(filepath);
+            pThis->setFile_path(path);
+            pThis->setState(new FileLoadedState(pThis));
+            return 0;
+        };
+        int play(std::string filepath) override{
+            QString path = QString::fromStdString(filepath);
+            pThis->setFile_path(path);
+            pThis->initialized();
+            pThis->start();
+            pThis->setState(new PlayState(pThis));
+            return 0;
+        };
+    };
+    class FileLoadedState: public MediaPlayerState{
+    public:
+        FileLoadedState(mediaplayer* pThis): MediaPlayerState(pThis){};
+        int play() override{
+            pThis->initialized();
+            pThis->start();
+            pThis->setState(new PlayState(pThis));
+            return 0;
+        };
+        int select(std::string filepath) override{
+            QString path = QString::fromStdString(filepath);
+            pThis->setFile_path(path);
+            return 0;
+        };
+    };
+    class PlayState: public MediaPlayerState{
+    public:
+        PlayState(mediaplayer* pThis): MediaPlayerState(pThis){};
+        int select(std::string filepath) override{
+            pThis->setRun_flag(false);
+            while(!pThis->run_flag()){
+                av_usleep(25000);
+            }
+            QString path = QString::fromStdString(filepath);
+            pThis->setFile_path(path);
+            pThis->setState(new FileLoadedState(pThis));
+            return 0;
+        };
+        int end() override{
+            pThis->clear_recourse();
+            pThis->setState(new NoFileLoadedState(pThis));
+            return 0;
+        };
+        int pause() override{
+            pThis->setPause_flag(true);
+            pThis->setState(new PauseState(pThis));
+            return 0;
+        }
+    };
+    class PauseState: public MediaPlayerState{
+    public:
+        PauseState(mediaplayer* pThis): MediaPlayerState(pThis){};
+        int play() override{
+            pThis->setPause_flag(false);
+            pThis->setState(new PlayState(pThis));
+            return 0;
+        };
+        int end() override{
+            pThis->clear_recourse();
+            pThis->setState(new NoFileLoadedState(pThis));
+            return 0;
+        };
+        int select(std::string filepath) override{
+            pThis->setPause_flag(false);
+            pThis->setRun_flag(false);
+            while(!pThis->run_flag()){
+                av_usleep(25000);
+            }
+            QString path = QString::fromStdString(filepath);
+            pThis->setFile_path(path);
+            pThis->setState(new FileLoadedState(pThis));
+            return 0;
+        };
+    };
     mediaplayer();
     int register_all();
     int initialized();
-    void play();
-    bool is_playing();
+    void media_fetch_thread();
     void clear_recourse();
+    int play();
+    int stop();
+    int quit_media_fetch();
 
     const QString &file_path() const;
-    void setFile_path(const QString &newFile_path);
+    int setFile_path(const QString &newFile_path);
 
     /**
      * @brief audio_buffer_size
@@ -68,48 +181,55 @@ public:
      * @param newAudio_buffer_cur
      */
     void setAudio_buffer_cur(int newAudio_buffer_cur);
-
     uint8_t* audio_buffer();
-
     FrameQueue &audio_frame_queue(); /* 已经被废弃，现在使用audio_packet_queue */
-
-    VideoState state() const;
-
+    VideoState state();
     const AVFrame &wanted_frame() const;
-
     PakcetQueue &audio_packet_queue();
-
     PakcetQueue &video_packet_queue();
-
     AVCodecContext *codec_context_audio() const;
-
     AVCodecContext *codec_context_video() const;
-
     long long play_samples_count() const;
     void setPlay_samples_count(long long play_samples_count);
-
     long long all_video_samples_count() const;
     void setAll_video_samples_count(long long all_video_samples_count);
-
     AVFormatContext *format_context() const;
-
     int video_stream_idx() const;
-
     void setState(const VideoState &state);
-
+    void setState(MediaPlayerState* state);
     void notifyMeidaPlayThread();
+    void setVt_running_flag(bool vt_running_flag);
+    bool video_flag() const;
+    bool audio_flag() const;
+
+    bool vt_running_flag() const;
 
 protected:
     void run() override;
+    
+
+public:
+
+    std::unique_ptr<MediaPlayerState> &media_player_state();
+
+    bool run_flag() const;
+    void setRun_flag(bool run_flag);
+
+    bool pause_flag() const;
+    void setPause_flag(bool pause_flag);
 
 private:
     QString m_file_path;
     //    bool m_playing;
     //    bool m_stop;
-    VideoState m_state; // 只有stop按钮会访问以及设置，不需要锁
+    VideoState m_state; // 已经被弃用
+    std::unique_ptr<MediaPlayerState> m_media_player_state;
+    bool m_run_flag;
+    bool m_pause_flag;
+    std::mutex m_state_mtx;
     bool m_is_register_all;
-    bool m_video_flag;
-    bool m_audio_flag;
+    bool m_video_flag; // 用于标记是否有视频流
+    bool m_audio_flag; // 用于标记是否有音频流
     int m_video_stream_idx;
     int m_audio_stream_idx;
     AVFormatContext* m_format_context;
@@ -139,6 +259,7 @@ private:
     int m_audio_buffer_cur; // 音频缓冲区当前指针
 
     std::thread* m_vt; // 用于解码并显示视频帧的线程
+    bool m_vt_running_flag; // 用于标记mvt线程的状态 已经被弃用
 
     /**
      * all_video_samples_count 用于记录当前媒体文件中音频样本总数
@@ -159,7 +280,9 @@ private:
      * @brief m_media_player_cond
      */
     std::mutex m_media_player_mtx;
-    std::condition_variable m_media_player_cond;
+    std::condition_variable m_media_player_cond_PLAYING_EXITING;
+
+    SDL_AudioSpec wanted_spec, obtained_spec;
 };
 
 #endif // MEDIAPLAYER_H

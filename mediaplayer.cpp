@@ -7,7 +7,6 @@ extern "C"{
 #include "libswscale/swscale.h"
 #include "libswresample/swresample.h"
 // #include "libavdevice/avdevice.h"
-#include "libavutil/time.h"
 #include "libavutil/pixfmt.h"
 #include "libavutil/imgutils.h"
 }
@@ -80,6 +79,9 @@ void video_thread(mediaplayer* pThis);
 
 mediaplayer::mediaplayer()
     : m_state(NO_FILE_LOADED),
+      m_media_player_state(new NoFileLoadedState(this)),
+      m_run_flag(true),
+      m_pause_flag(false),
       m_is_register_all(false),
       m_video_flag(false),
       m_audio_flag(false),
@@ -92,6 +94,7 @@ mediaplayer::mediaplayer()
       m_codec_audio(nullptr),
       m_audio_buffer_size(0),
       m_audio_buffer_cur(0),
+      m_vt_running_flag(false),
       m_all_video_samples_count(0),
       m_play_samples_count(0)
 {
@@ -101,7 +104,7 @@ mediaplayer::mediaplayer()
 
 int mediaplayer::register_all()
 {
-    av_register_all();
+//    av_register_all();
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER)) {
         qDebug() << "SDL init failed\n";
         exit(0);
@@ -113,84 +116,122 @@ int mediaplayer::register_all()
 int mediaplayer::initialized()
 {
     int err;
+//    clear_recourse();
+    // 首先初始化一些变量
+    m_play_samples_count = 0;
+    m_all_video_samples_count = 0;
+    memset(m_audio_buffer, 0, sizeof(m_audio_buffer));
+    m_audio_buffer_cur = 0;
+    m_audio_buffer_size = 0;
+    m_video_packet_queue.clear();
+    m_audio_packet_queue.clear();
+    m_video_flag = false;
+    m_audio_flag = false;
+    m_video_stream_idx = -1;
+    m_audio_stream_idx = -1;
     // 首先初始化媒体文件的格式上下文
-    m_format_context = avformat_alloc_context();
-    if(avformat_open_input(&m_format_context, m_file_path.toStdString().c_str(), nullptr, nullptr) < 0){
-        qDebug() << "avformat_open_input failed\n";
-        exit(0);
+    {
+        m_format_context = avformat_alloc_context();
+        if(avformat_open_input(&m_format_context, m_file_path.toStdString().c_str(), nullptr, nullptr) < 0){
+            qDebug() << "avformat_open_input failed\n";
+            exit(0);
+        }
     }
 
     // 然后寻找格式上下文当中的流信息
-    if(avformat_find_stream_info(m_format_context, nullptr) < 0){
-        qDebug() << "avformat_find_stream_info failed\n";
-        exit(0);
+    {
+        if(avformat_find_stream_info(m_format_context, nullptr) < 0){
+            qDebug() << "avformat_find_stream_info failed\n";
+            exit(0);
+        }
     }
 
     // 然后判断音视频流索引
-    for(unsigned int i = 0; i < m_format_context->nb_streams; i++){
-        if(m_format_context->streams[i]->codec->codec_type == AVMEDIA_TYPE_VIDEO){
-            m_video_stream_idx = i;
-        }else if(m_format_context->streams[i]->codec->codec_type == AVMEDIA_TYPE_AUDIO){
-            m_audio_stream_idx = i;
+    {
+        for(unsigned int i = 0; i < m_format_context->nb_streams; i++){
+            if(m_format_context->streams[i]->codec->codec_type == AVMEDIA_TYPE_VIDEO){
+                m_video_stream_idx = i;
+            }else if(m_format_context->streams[i]->codec->codec_type == AVMEDIA_TYPE_AUDIO){
+                m_audio_stream_idx = i;
+            }
         }
     }
 
     // 如果当前媒体文件中包含视频流，则初始化视频相关变量
-    if(m_video_stream_idx != -1){
-        // 视频编解码器
-        m_codec_video = avcodec_find_decoder(m_format_context->streams[m_video_stream_idx]->codecpar->codec_id);
-        if(!m_codec_video){
-            qDebug() << "m_codec_video not found\n";
-            exit(0);
+    {
+        if(m_video_stream_idx != -1){
+            // 视频编解码器
+            m_codec_video = avcodec_find_decoder(m_format_context->streams[m_video_stream_idx]->codecpar->codec_id);
+            if(!m_codec_video){
+                qDebug() << "m_codec_video not found\n";
+                exit(0);
+            }
+            // 申请视频编解码器上下文
+            m_codec_context_video = avcodec_alloc_context3(m_codec_video);
+            if(!m_codec_context_video){
+                qDebug() << "avcodec_alloc_context3 failed";
+                exit(0);
+            }
+            // 复制编解码上下文参数
+            err = avcodec_parameters_to_context(m_codec_context_video, m_format_context->streams[m_video_stream_idx]->codecpar);
+            if(err < 0){
+                qDebug() << "avcodec_parameters_to_context failed";
+                exit(0);
+            }
+            // 设置一下context的time_base和rate
+            m_codec_context_video->time_base = m_format_context->streams[m_video_stream_idx]->time_base;
+            m_codec_context_video->framerate = m_format_context->streams[m_audio_stream_idx]->r_frame_rate;
+            // 打开视频编解码器
+            if(avcodec_open2(m_codec_context_video, m_codec_video, nullptr) < 0){
+                qDebug() << "m_codec_context_audio avcodec_open2 failed\n";
+                exit(0);
+            }
+            m_video_flag = true;
         }
-        // 申请视频编解码器上下文
-        m_codec_context_video = avcodec_alloc_context3(m_codec_video);
-        if(!m_codec_context_video){
-            qDebug() << "avcodec_alloc_context3 failed";
-            exit(0);
-        }
-        // 复制编解码上下文参数
-        err = avcodec_parameters_to_context(m_codec_context_video, m_format_context->streams[m_video_stream_idx]->codecpar);
-        if(err < 0){
-            qDebug() << "avcodec_parameters_to_context failed";
-            exit(0);
-        }
-        // 设置一下context的time_base和rate
-        m_codec_context_video->time_base = m_format_context->streams[m_video_stream_idx]->time_base;
-        m_codec_context_video->framerate = m_format_context->streams[m_audio_stream_idx]->r_frame_rate;
-        // 打开视频编解码器
-        if(avcodec_open2(m_codec_context_video, m_codec_video, nullptr) < 0){
-            qDebug() << "m_codec_context_audio avcodec_open2 failed\n";
-            exit(0);
-        }
-        m_video_flag = true;
     }
 
     // 如果当前媒体文件中包含音频流，则初始化音频相关变量
-    if(m_audio_stream_idx != -1){
-        // 音频编解码器上下文
-        m_codec_context_audio = m_format_context->streams[m_audio_stream_idx]->codec;
-        // 音频编解码器
-        m_codec_audio = avcodec_find_decoder(m_codec_context_audio->codec_id);
-        if(!m_codec_audio){
-            qDebug() << "m_codec_audio open failed\n";
-            exit(0);
+    {
+        if(m_audio_stream_idx != -1){
+            // 音频编解码器上下文
+            m_codec_context_audio = m_format_context->streams[m_audio_stream_idx]->codec;
+            // 音频编解码器
+            m_codec_audio = avcodec_find_decoder(m_codec_context_audio->codec_id);
+            if(!m_codec_audio){
+                qDebug() << "m_codec_audio open failed\n";
+                exit(0);
+            }
+            // 打开音频编解码器
+            if(avcodec_open2(m_codec_context_audio, m_codec_audio, nullptr) < 0){
+                qDebug() << "m_codec_context_audio avcodec_open2 failed\n";
+                exit(0);
+            }
+            m_audio_flag = true;
+            // SDL驱动设置
+            wanted_spec.freq = m_codec_context_audio->sample_rate;
+            wanted_spec.channels = m_codec_context_audio->channels;
+            wanted_spec.silence = 0;
+            wanted_spec.samples = DEF_WANTED_SPEC_SAMPLES;
+            wanted_spec.format = av_format_to_sdl_formart(m_codec_context_audio->sample_fmt);
+            wanted_spec.callback = audio_callback_with_packet;
+            wanted_spec.userdata = this;
+            show_spec_information(&wanted_spec);
         }
-        // 打开音频编解码器
-        if(avcodec_open2(m_codec_context_audio, m_codec_audio, nullptr) < 0){
-            qDebug() << "m_codec_context_audio avcodec_open2 failed\n";
-            exit(0);
-        }
-        m_audio_flag = true;
     }
+
     // 打印编解码器信息
-    show_codec_context_information(m_codec_video, m_codec_context_video, m_video_stream_idx);
-    show_codec_context_information(m_codec_audio, m_codec_context_audio, m_audio_stream_idx);
+    {
+        show_codec_context_information(m_codec_video, m_codec_context_video, m_video_stream_idx);
+        show_codec_context_information(m_codec_audio, m_codec_context_audio, m_audio_stream_idx);
+    }
+
     return 0;
 }
 
-void mediaplayer::play()
+void mediaplayer::media_fetch_thread()
 {
+    // 首先创建相关变量
+    AVPacket* pkt = av_packet_alloc();
     // 首先判断是否有视频流
     if(!m_video_flag){
         // 设置视频背景为黑色
@@ -199,21 +240,11 @@ void mediaplayer::play()
         emit SIG_send_image(image);
     }else{
         // 否则开启视频处理线程
-        m_vt = new std::thread([](void (*func)(mediaplayer* pThis), mediaplayer* pThis){func(pThis);}, video_thread, this);
+        m_vt = new std::thread([](void (*func)(mediaplayer* pThis), mediaplayer* pThis){pThis->setVt_running_flag(true);func(pThis);}, video_thread, this);
         m_vt->detach();
     }
     // 然后判断是否包含音频流
     if(m_audio_flag){
-        // SDL驱动设置
-        SDL_AudioSpec wanted_spec, obtained_spec;
-        wanted_spec.freq = m_codec_context_audio->sample_rate;
-        wanted_spec.channels = m_codec_context_audio->channels;
-        wanted_spec.silence = 0;
-        wanted_spec.samples = DEF_WANTED_SPEC_SAMPLES;
-        wanted_spec.format = av_format_to_sdl_formart(m_codec_context_audio->sample_fmt);
-        wanted_spec.callback = audio_callback_with_packet;
-        wanted_spec.userdata = this;
-        show_spec_information(&wanted_spec);
         // 尝试设置相关spec
         if(SDL_OpenAudio(&wanted_spec, &obtained_spec) < 0){
             qDebug() << "failed to open the audio device\n";
@@ -226,208 +257,200 @@ void mediaplayer::play()
         m_wanted_frame.sample_rate = obtained_spec.freq;
         m_wanted_frame.channels = obtained_spec.channels;
         // 查看frame信息
-        qDebug() << "wanted frame info:";
         show_frame_information(&m_wanted_frame);
         // 开启SDL音频
         SDL_PauseAudio(0);
     }
 
-    // 首先创建相关变量
-//    int ret;
-    AVPacket* pkt = av_packet_alloc();
-//    AVFrame* frame = av_frame_alloc();
-//    AVFrame* frameRGB = av_frame_alloc();
-
-//    SwsContext* sws_context = sws_getContext(m_codec_context_video->width,
-//                                             m_codec_context_video->height,
-//                                             m_codec_context_video->pix_fmt,
-//                                             m_codec_context_video->width,
-//                                             m_codec_context_video->height,
-//                                             AV_PIX_FMT_RGB32,
-//                                             SWS_BILINEAR, NULL, NULL, NULL);
-//    if(!sws_context){
-//        qDebug() << "sws_getContext failed\n";
-//        exit(0);
-//    }
-
-//    const Uint8* output_buffer = (Uint8*)av_malloc(av_image_get_buffer_size(AV_PIX_FMT_RGB32,
-//                                                                          m_codec_context_video->width,
-//                                                                          m_codec_context_video->height,
-//                                                                          1));
-//    if(av_image_fill_arrays(frameRGB->data,
-//                         frameRGB->linesize,
-//                         output_buffer,
-//                         AV_PIX_FMT_RGB32,
-//                         m_codec_context_video->width,
-//                         m_codec_context_video->height,
-//                         1) < 0){
-//        qDebug() << "av_image_fill_arrays failed\n";
-//        exit(0);
-//    }
-    /**
+    /** @note
       这里会出现一些问题，当PakcetQueue缓冲长度太小的时候，可能会出现
       avcodec_read_frame读取的数据只有视频帧，然后就会导致视频队列占满
       但是音频队列缺没有数据，此时，音频时钟就不会进行增加，导致视频队列的
       视频帧无法被视频线程消费，进而进一步引发m_video_packet_queue.packet_queue_put(pkt);
       会卡死再条件变量的等待函数中，最终引发下面while循环卡死。
       **/
-    while(av_read_frame(m_format_context, pkt) >= 0){
-        /* if(pkt->stream_index == m_video_stream_idx){
-            av_packet_unref(pkt);
-            continue;
-            ret = avcodec_send_packet(m_codec_context_video, pkt);
-            if(ret < 0){
-                if(ret == AVERROR(EAGAIN)){
-                    // 如果当前没有缓冲区放packet了
-                }
-                else if(ret == AVERROR_EOF){
-                    // 如果当前已经没有packet可以使用了
-                }
-                else {
-                    qDebug() << "avcodec_send_packet failed\n";
-                    exit(0);
-                }
+
+    // 循环从format_context中提取packet，然后根据idx放到对应queue
+    {
+        while(av_read_frame(m_format_context, pkt) >= 0){
+            // 只允许media_fetch_thread访问state()
+//            if(state() == STOPING){
+//                // 睡50毫秒
+//                av_usleep(25000);
+//            }else if(state() == EXITING){
+//                // 退出循环，清理资源
+//                break;
+//            }
+            if(!run_flag()){
+                break;
             }
-            while(true){
-                // 从decoder中获取一帧图像
-                ret = avcodec_receive_frame(m_codec_context_video, frame);
-                if(ret < 0){
-                    if(ret == AVERROR(EAGAIN)){
-                        // 如果当前decoder中没有新帧可以提取了
-                        break;
-                    }
-                    else if(ret == AVERROR_EOF){
-                        // 当前decoder已经完全被刷新
-                        break;
-                    }
-                    else {
-                        qDebug() << "video avcodec_receive_frame failed\n";
-                        exit(0);
-                    }
-                }
-                // 将视频帧YUV格式转为RGB格式
-                sws_scale(sws_context,
-                          (uint8_t const *const *)frame->data,
-                          frame->linesize,
-                          0,
-                          m_codec_context_video->height,
-                          frameRGB->data,
-                          frameRGB->linesize);
-                // 将解码后的frame进行显示
-                QImage image = QImage((uchar*)frameRGB->data[0],
-                                      m_codec_context_video->width,
-                                      m_codec_context_video->height,
-                                      QImage::Format::Format_RGB32);
-//                av_frame_unref(frame);
-//                av_frame_unref(frameRGB);
-                emit SIG_send_image(image);
+            while(pause_flag()){
+               av_usleep(25000);
             }
-            av_packet_unref(pkt);
-            av_usleep(50000);
-        }else if(pkt->stream_index == m_audio_stream_idx){
-            ret = avcodec_send_packet(m_codec_context_audio, pkt);
-            if(ret < 0){
-                if(ret == AVERROR(EAGAIN)){
-                    // 表示缓冲区已经满了,现在还不能放，睡眠1毫秒
-                    av_usleep(1000);
-                }
-                else if(ret == AVERROR_EOF){
-                    // 表示当前解码器已经被重置，直接break
+
+            // 首先需要查看当前播放器状态
+            /*if(state() == STOPING){
+                // 暂停态：停止音频播放，并进入睡眠状态，等待被唤醒
+                std::unique_lock<std::mutex> lock(m_media_player_mtx);
+                SDL_PauseAudio(1);
+                setState(STOPED);
+                m_media_player_cond_PLAYING_EXITING.wait(lock, [&](){return ((state() == PLAYING) || (state() == EXITING));});
+                if(state() == EXITING){
                     break;
                 }
-                else {
-                    qDebug() << "avcodec_send_packet failed\n";
-                    exit(0);
-                }
+                SDL_PauseAudio(0);
+            }else if(state() == EXITING){
+                // 如果状态为退出，那就跳出循环，清理资源
+                break;
+            }*/
+            if(pkt->stream_index == m_video_stream_idx){
+                // 将packet放入m_video_packet_queue中，然后视频线程会自动消费
+                m_video_packet_queue.packet_queue_put(pkt);
+                av_packet_unref(pkt);
+            }else if(pkt->stream_index == m_audio_stream_idx){
+                m_audio_packet_queue.packet_queue_put(pkt);
+                av_packet_unref(pkt);
+            }else{
+                // 释放pkt中的数据
+                av_packet_unref(pkt);
             }
-            while(ret >= 0){
-                ret = avcodec_receive_frame(m_codec_context_audio, frame);
-                if(ret < 0){
-                    if(ret == AVERROR(EAGAIN)){
-                        // 表示解码器缓冲区已经没有可以再接收的帧了，需要退出重新存入packet
-                        break;
-                    }
-                    else if(ret == AVERROR_EOF){
-                        // 表示当前解码器已经被重置，需要退出
-                        break;
-                    }
-                    else {
-                        // 表示发生未知错误
-                        qDebug() << "audio avcodec_receive_frame failed\n";
-                        exit(0);
-                    }
-                }
-                // 拿到了一帧解码后的音频样本数据
-                m_audio_frame_queue.frame_queue_put(frame);
-                av_frame_unref(frame);
-             }
-             av_packet_unref(pkt);
-         }else{
-             av_packet_unref(pkt);
-         } */
-        // 首先需要查看是否已经暂停
-        {
-            std::unique_lock<std::mutex> lock(m_media_player_mtx);
-            m_media_player_cond.wait(lock, [&](){return m_state == PLAYING;});
-        }
-        if(pkt->stream_index == m_video_stream_idx){
-            // 将packet放入m_video_packet_queue中，然后视频线程会自动消费
-            m_video_packet_queue.packet_queue_put(pkt);
-            av_packet_unref(pkt);
-        }else if(pkt->stream_index == m_audio_stream_idx){
-            m_audio_packet_queue.packet_queue_put(pkt);
-            av_packet_unref(pkt);
-        }else{
-            // 释放pkt中的数据
-            av_packet_unref(pkt);
         }
     }
-    // 退出之前清理资源
-    // 首先像m_vt函数中添加一个结束包
-    const char* exit_str = "finish";
-    pkt->data = (uint8_t *)av_malloc(sizeof(exit_str) + 1);
-    pkt->size = sizeof(exit_str) + 1;
-    memcpy(pkt->data, (const void*)exit_str, 6);
-    m_video_packet_queue.packet_queue_put(pkt);
-    // 将video_thread线程添加到等待缓冲
-//    m_vt->join();
-    if(pkt){
-        // 首先释放pkt->data
-        if(pkt->data){
-            av_free(pkt->data);
+
+    /// 退出之前清理资源（vt线程，SDL音频线程，pkt）
+
+    // 首先向m_vt函数中添加一个结束包
+//    {
+//        const char* exit_str = "exit";
+//        pkt->data = (uint8_t *)av_malloc(sizeof(exit_str) + 1);
+//        pkt->size = sizeof(exit_str) + 1;
+//        memcpy(pkt->data, (const void*)exit_str, 4);
+//        m_video_packet_queue.packet_queue_put(pkt);
+//        // 等待m_vt线程的退出
+//        while(true){
+//            if(!vt_running_flag()){
+//                break;
+//            }
+//            // 睡眠50毫秒
+//            av_usleep(50000);
+//        }
+//    }
+
+    // 停止音频播放，并关闭音频设备
+    {
+        SDL_PauseAudio(1);
+        SDL_CloseAudio();
+    }
+
+    // 释放 packet 资源
+    {
+        if(pkt){
+            // 首先释放pkt->data
+            if(pkt->data){
+                av_free(pkt->data);
+            }
+            av_packet_unref(pkt);
+            av_packet_free(&pkt);
         }
-        av_packet_unref(pkt);
-        av_packet_free(&pkt);
+    }
+
+    // 清理剩余资源并设置EXITED标志
+    {
+//        clear_recourse();
+//        setState(EXITED);
+    }
+
+    // 执行end事件
+    {
+        media_player_state()->end();
     }
     qDebug() << "media player thread exit.";
 }
 
-bool mediaplayer::is_playing()
-{
-    return m_state == PLAYING;
-}
-
 void mediaplayer::clear_recourse()
 {
-    if(m_codec_context_video){
-        avcodec_close(m_codec_context_video);
-    }
-    if(m_codec_context_audio){
-        avcodec_close(m_codec_context_audio);
-    }
     if(m_format_context){
         avformat_close_input(&m_format_context);
+        avformat_free_context(m_format_context);
+        m_format_context = nullptr;
     }
-    m_state = STOPING;
+    if(m_codec_context_video){
+        avcodec_close(m_codec_context_video);
+        avcodec_free_context(&m_codec_context_video);
+        m_codec_context_video = nullptr;
+    }
+//    if(m_codec_context_audio){
+//        avcodec_close(m_codec_context_audio);
+//        avcodec_free_context(&m_codec_context_audio);
+//        m_codec_context_audio = nullptr;
+//    }
+    m_play_samples_count = 0;
+    m_all_video_samples_count = 0;
+    memset(m_audio_buffer, 0, sizeof(m_audio_buffer));
+    m_audio_buffer_cur = 0;
+    m_audio_buffer_size = 0;
+    m_video_packet_queue.clear();
+    m_audio_packet_queue.clear();
     m_video_flag = false;
     m_audio_flag = false;
     m_video_stream_idx = -1;
     m_audio_stream_idx = -1;
-    m_format_context = nullptr;
-    m_codec_context_video = nullptr;
-    m_codec_context_audio = nullptr;
-    m_codec_video = nullptr;
-    m_codec_audio = nullptr;
+    m_run_flag = true;
+    m_pause_flag = false;
+}
+
+int mediaplayer::play()
+{
+    /* 首先，media_player 一共有七种状态
+     * （NO_FILE_LOADED、FILE_LOADED、PLAYING、STOPING、STOPED、EXITING、EXITED）
+     * 如果想要播放视频
+     * 1、首先要确保已经选取文件
+     * 2、需要确保选取的文件路径不为空且是文件路径
+     * 3、
+     */
+    QString tmp_filepath;
+//    std::unique_lock<std::mutex> lock(m_state_mtx);
+    auto now_state = state();
+    if(now_state == NO_FILE_LOADED){
+        tmp_filepath = QFileDialog::getOpenFileName(nullptr, nullptr, nullptr);
+        QFileInfo fileinfo = QFileInfo(tmp_filepath);
+        if(tmp_filepath.isNull() || \
+                tmp_filepath.isEmpty() || \
+                !fileinfo.isFile()){
+            return 0;
+        }
+        m_file_path = tmp_filepath;
+    }
+    if(now_state == PLAYING || now_state == EXITING){
+        return -1;
+    }
+    if(now_state == STOPING){
+        setState(PLAYING);
+        return 0;
+    }
+    initialized();
+    setState(PLAYING);
+    start();
+    return 0;
+}
+
+int mediaplayer::stop()
+{
+    if(state() != PLAYING){
+        return 0;
+    }
+    setState(STOPING);
+    return 0;
+}
+
+int mediaplayer::quit_media_fetch()
+{
+    setState(EXITING);
+    notifyMeidaPlayThread();
+    while(state() != EXITED){
+        av_usleep(20000);
+    }
+    return 0;
 }
 
 const QString &mediaplayer::file_path() const
@@ -435,16 +458,81 @@ const QString &mediaplayer::file_path() const
     return m_file_path;
 }
 
-void mediaplayer::setFile_path(const QString &newFile_path)
+int mediaplayer::setFile_path(const QString &newFile_path)
 {
     m_file_path = newFile_path;
+    // 确保状态操作一次完成
+    /*auto now_state = state();
+    if(now_state == EXITED || \
+            now_state == NO_FILE_LOADED || \
+            now_state == FILE_LOADED){
+        m_file_path = newFile_path;
+        setState(FILE_LOADED);
+        return 0;
+    }
+    if(now_state == PLAYING || now_state == STOPING){
+        setState(EXITING);
+        while(state() != EXITED){
+            av_usleep(20000);
+        }
+        m_file_path = newFile_path;
+        setState(FILE_LOADED);
+        return 0;
+    }
+    if(now_state == EXITING){
+        return -1;
+    }*/
+    return -1;
 }
 
 void mediaplayer::run()
 {
-    m_state = PLAYING;
-    // 开始播放
-    play();
+    media_fetch_thread();
+}
+
+std::unique_ptr<mediaplayer::MediaPlayerState> &mediaplayer::media_player_state()
+{
+    return m_media_player_state;
+}
+
+bool mediaplayer::run_flag() const
+{
+    return m_run_flag;
+}
+
+void mediaplayer::setRun_flag(bool run_flag)
+{
+    m_run_flag = run_flag;
+}
+
+bool mediaplayer::pause_flag() const
+{
+    return m_pause_flag;
+}
+
+void mediaplayer::setPause_flag(bool pause_flag)
+{
+    m_pause_flag = pause_flag;
+}
+
+bool mediaplayer::vt_running_flag() const
+{
+    return m_vt_running_flag;
+}
+
+bool mediaplayer::audio_flag() const
+{
+    return m_audio_flag;
+}
+
+bool mediaplayer::video_flag() const
+{
+    return m_video_flag;
+}
+
+void mediaplayer::setVt_running_flag(bool vt_running_flag)
+{
+    m_vt_running_flag = vt_running_flag;
 }
 
 void mediaplayer::setState(const VideoState &state)
@@ -452,9 +540,13 @@ void mediaplayer::setState(const VideoState &state)
     m_state = state;
 }
 
+void mediaplayer::setState(MediaPlayerState* state){
+    m_media_player_state.reset(state);
+}
+
 void mediaplayer::notifyMeidaPlayThread()
 {
-    m_media_player_cond.notify_one();
+    m_media_player_cond_PLAYING_EXITING.notify_one();
 }
 
 int mediaplayer::video_stream_idx() const
@@ -512,7 +604,7 @@ const AVFrame &mediaplayer::wanted_frame() const
     return m_wanted_frame;
 }
 
-VideoState mediaplayer::state() const
+VideoState mediaplayer::state()
 {
     return m_state;
 }
@@ -798,7 +890,7 @@ void video_thread(mediaplayer* pThis){
     int decode_count = 0;
     int get_packet_count = 0;
     AVPacket* packet;
-    std::vector<AVPacket*> packets_in_decoder;
+    std::vector<AVPacket*> packets_in_decoder(100);
     bool decode_success_flag = false;
     AVFrame* frame = av_frame_alloc();
     AVFrame* frameRGB = av_frame_alloc();
@@ -839,12 +931,25 @@ void video_thread(mediaplayer* pThis){
 
     qDebug() << QString("%1%2%3%4").arg("frame_pts: ", -12).arg("play_time", -12).arg("video_caculate_play_time", -30).arg("play_frame: ", -12);
     while(true){
+//        if(pThis->state() == EXITING){
+//            break;
+//        }
+//        while(pThis->state() == STOPING){
+//            // 睡25毫秒
+//            av_usleep(25000);
+//        }
+        if(!pThis->run_flag()){
+            break;
+        }
+        while(pThis->pause_flag()){
+            av_usleep(25000);
+        }
         // 首先从m_video_packet_queue中获取一个pakcet
         packet = pThis->video_packet_queue().packet_queue_get(0);
         while(!packet){
             // 如果因为队列为空，导致没有拿到packet
             packet = pThis->video_packet_queue().packet_queue_get(0);
-            av_usleep(500);
+            av_usleep(1000);
             get_packet_count++;
             // 下面需要先实现音视频同步才可以
 //            if(get_packet_count >= 300){
@@ -853,10 +958,10 @@ void video_thread(mediaplayer* pThis){
 //            }
         }
         // 判断是否是完毕包，是则退出线程
-        if(memcmp(packet->data, "finish", 6) == 0){
-            // 收到结束包，直接退出线程
-            break;
-        }
+//        if(memcmp(packet->data, "exit", 4) == 0){
+//            // 收到结束包，直接退出线程
+//            break;
+//        }
         // 拿到一个packet之后，发送至解码器
         err = avcodec_send_packet(codec_context_video, packet);
         if(err < 0){
@@ -877,6 +982,15 @@ void video_thread(mediaplayer* pThis){
         // 如果不将前几个packet存起来，可能会导致内存泄漏
         packets_in_decoder.push_back(packet);
         do{
+//            if(pThis->state() == EXITING){
+//                break;
+//            }
+            if(!pThis->run_flag()){
+                break;
+            }
+            while(pThis->pause_flag()){
+                av_usleep(25000);
+            }
             err = avcodec_receive_frame(codec_context_video, frame);
             if(err < 0){
                 if(err == AVERROR(EAGAIN)){
@@ -914,12 +1028,21 @@ void video_thread(mediaplayer* pThis){
                 exit(0);
             }
             // 转码成功后，将内容转成QImage
-            QImage image = QImage((uchar *)output_buffer, frame->width, frame->height, QImage::Format::Format_RGB32);
+            QImage image = QImage((uchar *)output_buffer, frame->width, frame->height, QImage::Format::Format_RGB32).copy();
             // 基于音频时钟做一下等待
             while(true){
+//                if(pThis->state() == EXITING){
+//                    break;
+//                }
+                if(!pThis->run_flag()){
+                    break;
+                }
+                while(pThis->pause_flag()){
+                    av_usleep(25000);
+                }
                 // 1、获取已播放样本数
                 long long play_samples_count = pThis->play_samples_count();
-                const char* state = (video_caculate_play_time > play_time) ? "1" : (video_caculate_play_time < play_time - audio_time_base * 1024 ? "2" : "3");
+                const char* state = (video_caculate_play_time > play_time) ? "1" : (video_caculate_play_time < play_time - audio_time_base * DEF_WANTED_SPEC_SAMPLES ? "2" : "3");
                 // 2、通过“已播放样本数”计算“已播放时间”
                 play_time = play_samples_count * audio_time_base;
                 video_caculate_play_time = frame->pts * video_time_base;
@@ -969,6 +1092,7 @@ void video_thread(mediaplayer* pThis){
     if(sws_ctx){
         sws_freeContext(sws_ctx);
     }
+    // 释放packets_in_decoder中残留packet资源
     for (auto pkt : packets_in_decoder) {
         if (pkt) {
             av_packet_unref(pkt);
@@ -976,5 +1100,7 @@ void video_thread(mediaplayer* pThis){
         }
     }
     packets_in_decoder.clear();
+    // 设置退出标记为true
+    pThis->setVt_running_flag(false);
     qDebug() << "vt thread returnd.";
 }

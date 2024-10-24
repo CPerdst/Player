@@ -9,7 +9,7 @@ PakcetQueue::PakcetQueue():
     m_packet_size(0),
     m_packet_all_size(0),
     m_packet_length(0),
-    m_max_packet_count(50)
+    m_max_packet_count(MAX_QUEUE_COUNT)
 {
 
 }
@@ -76,6 +76,14 @@ uint64_t PakcetQueue::size() const
 uint64_t PakcetQueue::length() const
 {
     return m_packet_length;
+}
+
+void PakcetQueue::clear()
+{
+    std::unique_lock<std::mutex> lock(m_packet_mtx);
+    while(!m_packet_queue.empty()){
+        m_packet_queue.pop();
+    }
 }
 
 

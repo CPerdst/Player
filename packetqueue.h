@@ -10,6 +10,8 @@ extern "C"
 #include "libavcodec/avcodec.h"
 }
 
+#define MAX_QUEUE_COUNT 50
+
 class PakcetQueue
 {
 public:
@@ -19,6 +21,8 @@ public:
 
     uint64_t size() const;
     uint64_t length() const;
+
+    void clear();
 
 private:
     std::queue<AVPacket*> m_packet_queue;
