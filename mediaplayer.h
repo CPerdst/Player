@@ -36,6 +36,7 @@ class mediaplayer : public QThread
     Q_OBJECT
 signals:
     void SIG_send_image(QImage image);
+    void SIG_send_playtime(double time);
 
 public:
     class MediaPlayerState{

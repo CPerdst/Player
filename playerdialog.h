@@ -37,6 +37,7 @@ private slots:
 
     void on_pb_stop_clicked();
     void SLOT_update_variables();
+    void SLOT_receive_playtime(double time);
 
 private:
     Ui::PlayerDialog *ui;

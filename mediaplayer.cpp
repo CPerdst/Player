@@ -335,6 +335,16 @@ void mediaplayer::media_fetch_thread()
 //            av_usleep(50000);
 //        }
 //    }
+    // 等待m_vt线程先退出
+    {
+        setRun_flag(false);
+        while(true){
+            if(!vt_running_flag()){
+                break;
+            }
+            av_usleep(25000);
+        }
+    }
 
     // 停止音频播放，并关闭音频设备
     {
@@ -577,6 +587,7 @@ long long mediaplayer::play_samples_count() const
 void mediaplayer::setPlay_samples_count(long long play_samples_count)
 {
     m_play_samples_count = play_samples_count;
+    emit SIG_send_playtime(m_play_samples_count * av_q2d(m_codec_context_audio->time_base));
 }
 
 AVCodecContext *mediaplayer::codec_context_video() const

@@ -21,6 +21,8 @@ PlayerDialog::PlayerDialog(QWidget *parent)
     connect(&m_media_player, SIGNAL(SIG_send_image(QImage)), this, SLOT(SLOT_receive_image(QImage)));
     // 2、QTimer计时器打印播放器成员变量
     connect(&m_timer, SIGNAL(timeout()), this, SLOT(SLOT_update_variables()));
+    // 3、视频时钟更新
+    connect(&m_media_player, SIGNAL(SIG_send_playtime(double)), this, SLOT(SLOT_receive_playtime(double)));
 
     // 初始化控件
     // 1、设置lb_show为全黑背景
@@ -127,4 +129,12 @@ void PlayerDialog::SLOT_update_variables()
     ui->lb_m_audio_buffer_cur->setText(QString("audio_buffer_cur: %1").arg(m_media_player.audio_buffer_cur()));
     ui->lb_m_all_video_samples_count->setText(QString("all_samples_count: %1").arg(m_media_player.all_video_samples_count()));
     ui->lb_m_play_samples_count->setText(QString("play_samples_count: %1").arg(m_media_player.play_samples_count()));
+}
+
+void PlayerDialog::SLOT_receive_playtime(double time)
+{
+    int it = static_cast<int>(time);
+    QTime t(0, 0, 0, 0);
+    QTime tt = t.addSecs(it);
+    ui->lb_time_show->setText(tt.toString());
 }
