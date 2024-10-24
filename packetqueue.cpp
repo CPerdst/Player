@@ -84,6 +84,9 @@ void PakcetQueue::clear()
     while(!m_packet_queue.empty()){
         m_packet_queue.pop();
     }
+    m_packet_size = 0;
+    m_packet_length = 0;
+    m_packet_all_size = 0;
 }
 
 

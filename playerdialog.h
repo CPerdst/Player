@@ -45,6 +45,7 @@ private:
     bool m_playing;
     std::function<void(void)> m_select_callbacks;
     QTimer m_timer;
+    bool m_druggle_slider;
 
 };
 #endif // PLAYERDIALOG_H

@@ -226,6 +226,9 @@ public:
 
     int audio_stream_idx() const;
 
+    int audio_queue_size() const;
+    int video_queue_size() const;
+
 private:
     QString m_file_path;
     //    bool m_playing;

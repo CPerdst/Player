@@ -319,31 +319,34 @@ void mediaplayer::media_fetch_thread()
         }
     }
 
-    while(run_flag() && (m_audio_packet_queue.size() > 5 || m_video_packet_queue.size() > 0)){
-//        qDebug() << "-----------------------------------";
-//        qDebug() << "audio: " << m_audio_packet_queue.size();
-//        qDebug() << "video: " << m_video_packet_queue.size();
+    while(run_flag() && (m_audio_packet_queue.size() > 0 || m_video_packet_queue.size() > 0)){
         av_usleep(25000);
     }
 
     /// 退出之前清理资源（vt线程，SDL音频线程，pkt）
 
     // 首先向m_vt函数中添加一个结束包
-//    {
-//        const char* exit_str = "exit";
-//        pkt->data = (uint8_t *)av_malloc(sizeof(exit_str) + 1);
-//        pkt->size = sizeof(exit_str) + 1;
-//        memcpy(pkt->data, (const void*)exit_str, 4);
-//        m_video_packet_queue.packet_queue_put(pkt);
-//        // 等待m_vt线程的退出
-//        while(true){
-//            if(!vt_running_flag()){
-//                break;
-//            }
-//            // 睡眠50毫秒
-//            av_usleep(50000);
-//        }
-//    }
+    /*{
+        const char* exit_str = "exit";
+        pkt->data = (uint8_t *)av_malloc(sizeof(exit_str) + 1);
+        pkt->size = sizeof(exit_str) + 1;
+        memcpy(pkt->data, (const void*)exit_str, 4);
+        m_video_packet_queue.packet_queue_put(pkt);
+        // 等待m_vt线程的退出
+        while(true){
+            if(!vt_running_flag()){
+                break;
+            }
+            // 睡眠50毫秒
+            av_usleep(50000);
+        }
+    }*/
+    // 停止音频播放，并关闭音频设备
+    {
+        SDL_PauseAudio(1);
+        SDL_CloseAudio();
+    }
+    qDebug() << "test";
     // 等待m_vt线程先退出
     {
         setRun_flag(false);
@@ -353,12 +356,6 @@ void mediaplayer::media_fetch_thread()
             }
             av_usleep(25000);
         }
-    }
-
-    // 停止音频播放，并关闭音频设备
-    {
-        SDL_PauseAudio(1);
-        SDL_CloseAudio();
     }
 
     // 释放 packet 资源
@@ -537,6 +534,16 @@ void mediaplayer::setPause_flag(bool pause_flag)
 int mediaplayer::audio_stream_idx() const
 {
     return m_audio_stream_idx;
+}
+
+int mediaplayer::audio_queue_size() const
+{
+    return m_audio_packet_queue.size();
+}
+
+int mediaplayer::video_queue_size() const
+{
+    return m_video_packet_queue.size();
 }
 
 bool mediaplayer::vt_running_flag() const
@@ -959,15 +966,8 @@ void video_thread(mediaplayer* pThis){
         exit(0);
     }
 
-    qDebug() << QString("%1%2%3%4").arg("frame_pts: ", -12).arg("play_time", -12).arg("video_caculate_play_time", -30).arg("play_frame: ", -12);
+    // qDebug() << QString("%1%2%3%4").arg("frame_pts: ", -12).arg("play_time", -12).arg("video_caculate_play_time", -30).arg("play_frame: ", -12);
     while(true){
-//        if(pThis->state() == EXITING){
-//            break;
-//        }
-//        while(pThis->state() == STOPING){
-//            // 睡25毫秒
-//            av_usleep(25000);
-//        }
         if(!pThis->run_flag()){
             break;
         }
@@ -977,6 +977,12 @@ void video_thread(mediaplayer* pThis){
         // 首先从m_video_packet_queue中获取一个pakcet
         packet = pThis->video_packet_queue().packet_queue_get(0);
         while(!packet){
+            if(!pThis->run_flag()){
+                break;
+            }
+            while(pThis->pause_flag()){
+                av_usleep(25000);
+            }
             // 如果因为队列为空，导致没有拿到packet
             packet = pThis->video_packet_queue().packet_queue_get(0);
             av_usleep(1000);
@@ -986,12 +992,13 @@ void video_thread(mediaplayer* pThis){
 //                // 说明出了问题，退出清理资源
 //                break;
 //            }
+            if(get_packet_count > 300){
+                break;
+            }
         }
-        // 判断是否是完毕包，是则退出线程
-//        if(memcmp(packet->data, "exit", 4) == 0){
-//            // 收到结束包，直接退出线程
-//            break;
-//        }
+        if(get_packet_count > 300){
+            continue;
+        }
         // 拿到一个packet之后，发送至解码器
         err = avcodec_send_packet(codec_context_video, packet);
         if(err < 0){
@@ -1012,9 +1019,6 @@ void video_thread(mediaplayer* pThis){
         // 如果不将前几个packet存起来，可能会导致内存泄漏
         packets_in_decoder.push_back(packet);
         do{
-//            if(pThis->state() == EXITING){
-//                break;
-//            }
             if(!pThis->run_flag()){
                 break;
             }
@@ -1061,18 +1065,16 @@ void video_thread(mediaplayer* pThis){
             QImage image = QImage((uchar *)output_buffer, frame->width, frame->height, QImage::Format::Format_RGB32).copy();
             // 基于音频时钟做一下等待
             while(true){
-//                if(pThis->state() == EXITING){
-//                    break;
-//                }
                 if(!pThis->run_flag()){
                     break;
                 }
                 while(pThis->pause_flag()){
                     av_usleep(25000);
                 }
+                int count = 0;
                 // 1、获取已播放样本数
                 long long play_samples_count = pThis->play_samples_count();
-                const char* state = (video_caculate_play_time > play_time) ? "1" : (video_caculate_play_time < play_time - audio_time_base * DEF_WANTED_SPEC_SAMPLES ? "2" : "3");
+                // const char* state = (video_caculate_play_time > play_time) ? "1" : (video_caculate_play_time < play_time - audio_time_base * DEF_WANTED_SPEC_SAMPLES ? "2" : "3");
                 // 2、通过“已播放样本数”计算“已播放时间”
                 play_time = play_samples_count * audio_time_base;
                 video_caculate_play_time = frame->pts * video_time_base;
@@ -1086,6 +1088,10 @@ void video_thread(mediaplayer* pThis){
                 if(video_caculate_play_time > play_time){
                     // 如果视频帧播放时间大于当亲媒体播放时间，则等待1ms
                     av_usleep(1000);
+                    count++;
+                    if(count > 50){
+                        break;
+                    }
                     continue;
                 }else{
                     // 如果视频帧播放时间小于当亲媒体播放时间，有两种情况

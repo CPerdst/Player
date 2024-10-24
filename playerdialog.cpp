@@ -11,6 +11,7 @@ extern "C"{
 PlayerDialog::PlayerDialog(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::PlayerDialog)
+    , m_druggle_slider(false)
 {
     ui->setupUi(this);
     // 初始化模块
@@ -89,19 +90,19 @@ void PlayerDialog::on_pb_play_clicked()
 
 void PlayerDialog::on_hslider_process_sliderMoved(int position)
 {
-    qDebug() << "Slider moved to: " << position;
     return;
 }
 
 void PlayerDialog::on_hslider_process_sliderPressed()
 {
-    qDebug() << "Slider pressed!";
+    m_druggle_slider = true;
     return;
 }
 
 void PlayerDialog::on_hslider_process_sliderReleased()
 {
     qDebug() << "Slider released!";
+    m_druggle_slider = false;
     return;
 }
 
@@ -123,8 +124,10 @@ void PlayerDialog::SLOT_update_variables()
     }else if(dynamic_cast<mediaplayer::PauseState*>(m_media_player.media_player_state().get())){
         ui->lb_m_state->setText(QString("state: %1").arg(QString("Pause")));
     }
-    ui->lb_m_video_flag->setText(QString("video_flag: %1").arg(m_media_player.video_flag()));
-    ui->lb_m_audio_flag->setText(QString("audio_flag: %1").arg(m_media_player.audio_flag()));
+//    ui->lb_m_video_flag->setText(QString("video_flag: %1").arg(m_media_player.video_flag()));
+//    ui->lb_m_audio_flag->setText(QString("audio_flag: %1").arg(m_media_player.audio_flag()));
+    ui->lb_m_video_flag->setText(QString("audio_queue_size: %1").arg(m_media_player.audio_queue_size()));
+    ui->lb_m_audio_flag->setText(QString("video_queue_size: %1").arg(m_media_player.video_queue_size()));
     ui->lb_m_audio_buffer_size->setText(QString("audio_buffer_size: %1").arg(m_media_player.audio_buffer_size()));
     ui->lb_m_audio_buffer_cur->setText(QString("audio_buffer_cur: %1").arg(m_media_player.audio_buffer_cur()));
     ui->lb_m_all_video_samples_count->setText(QString("all_samples_count: %1").arg(m_media_player.all_video_samples_count()));
@@ -139,5 +142,7 @@ void PlayerDialog::SLOT_receive_playtime(double time)
     ui->lb_time_show->setText(tt.toString());
     int res = (int)(((double)m_media_player.play_samples_count() / (double)m_media_player.all_video_samples_count()) * 1000) + 1;
 //    qDebug() << res;
-    ui->hslider_process->setValue(res);
+    if(!m_druggle_slider){
+        ui->hslider_process->setValue(res);
+    }
 }
