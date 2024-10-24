@@ -206,6 +206,8 @@ int mediaplayer::initialized()
                 qDebug() << "m_codec_context_audio avcodec_open2 failed\n";
                 exit(0);
             }
+            // 设置音频总样本数
+            m_all_video_samples_count = m_format_context->streams[m_audio_stream_idx]->duration;
             m_audio_flag = true;
             // SDL驱动设置
             wanted_spec.freq = m_codec_context_audio->sample_rate;
@@ -315,6 +317,13 @@ void mediaplayer::media_fetch_thread()
                 av_packet_unref(pkt);
             }
         }
+    }
+
+    while(run_flag() && (m_audio_packet_queue.size() > 5 || m_video_packet_queue.size() > 0)){
+//        qDebug() << "-----------------------------------";
+//        qDebug() << "audio: " << m_audio_packet_queue.size();
+//        qDebug() << "video: " << m_video_packet_queue.size();
+        av_usleep(25000);
     }
 
     /// 退出之前清理资源（vt线程，SDL音频线程，pkt）
@@ -523,6 +532,11 @@ bool mediaplayer::pause_flag() const
 void mediaplayer::setPause_flag(bool pause_flag)
 {
     m_pause_flag = pause_flag;
+}
+
+int mediaplayer::audio_stream_idx() const
+{
+    return m_audio_stream_idx;
 }
 
 bool mediaplayer::vt_running_flag() const
@@ -869,7 +883,8 @@ void audio_callback_with_packet(void *userdata, Uint8 * stream, int len){
     int remain_size;
     mediaplayer* pThis = (mediaplayer*)userdata;
     Uint8* audio_buffer = pThis->audio_buffer();
-    int per_sample_size = av_get_bytes_per_sample(pThis->codec_context_audio()->sample_fmt) * pThis->codec_context_audio()->channels;
+//    int per_sample_size = av_get_bytes_per_sample(pThis->codec_context_audio()->sample_fmt) * pThis->codec_context_audio()->channels;
+    int per_sample_size = av_get_bytes_per_sample((AVSampleFormat)pThis->wanted_frame().format) * pThis->wanted_frame().channels;
     while(len){
         if(pThis->pause_flag()){
             memset(stream, 0, len);
@@ -1061,7 +1076,13 @@ void video_thread(mediaplayer* pThis){
                 // 2、通过“已播放样本数”计算“已播放时间”
                 play_time = play_samples_count * audio_time_base;
                 video_caculate_play_time = frame->pts * video_time_base;
-                qDebug() << QString("%1%2%3%4").arg(frame->pts, -12).arg(play_time, -12).arg(video_caculate_play_time, -30).arg(state, -12);
+                /*qDebug() << QString("%1%2%3%4%5%6%7").\
+                            arg(frame->pts, -12).\
+                            arg(play_time, -12).\
+                            arg(video_caculate_play_time, -12).\
+                            arg(state, -3).\
+                            arg(pThis->format_context()->streams[pThis->audio_stream_idx()]->duration, -8).\
+                            arg(av_q2d(pThis->codec_context_audio()->time_base), -15).arg(play_samples_count, -12);*/
                 if(video_caculate_play_time > play_time){
                     // 如果视频帧播放时间大于当亲媒体播放时间，则等待1ms
                     av_usleep(1000);

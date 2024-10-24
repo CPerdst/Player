@@ -36,7 +36,7 @@ PlayerDialog::PlayerDialog(QWidget *parent)
     time.setHMS(0, 0, 0);
     ui->lb_time_show->setText(time.toString());
     // 3、设置hslider_process的总位置(视频秒数)
-//    ui->hslider_process->setDisabled(true);
+    ui->hslider_process->setRange(1, 1000);
     // 4、开启计时器,10毫秒
     m_timer.start(10);
 
@@ -137,4 +137,7 @@ void PlayerDialog::SLOT_receive_playtime(double time)
     QTime t(0, 0, 0, 0);
     QTime tt = t.addSecs(it);
     ui->lb_time_show->setText(tt.toString());
+    int res = (int)(((double)m_media_player.play_samples_count() / (double)m_media_player.all_video_samples_count()) * 1000) + 1;
+//    qDebug() << res;
+    ui->hslider_process->setValue(res);
 }

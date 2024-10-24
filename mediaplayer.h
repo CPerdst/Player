@@ -224,6 +224,8 @@ public:
     bool pause_flag() const;
     void setPause_flag(bool pause_flag);
 
+    int audio_stream_idx() const;
+
 private:
     QString m_file_path;
     //    bool m_playing;
