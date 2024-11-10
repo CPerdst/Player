@@ -27,7 +27,7 @@ PlayerDialog::PlayerDialog(QWidget *parent)
 
     // 初始化控件
     // 1、设置lb_show为全黑背景
-    ui->lb_show->setScaledContents(true);
+//    ui->lb_show->setScaledContents(true);
     qDebug() << ui->lb_show->width() << " " << ui->lb_show->height();
     QImage background = QImage(ui->lb_show->width(), ui->lb_show->height(), QImage::Format::Format_RGB32);
     background.fill(Qt::black);
@@ -65,7 +65,7 @@ void PlayerDialog::SLOT_receive_image(QImage image)
 {
     int w = this->ui->lb_show->width();
     int h = this->ui->lb_show->height();
-    QPixmap pixmap = QPixmap::fromImage(image.scaled(w, h, Qt::KeepAspectRatio));
+    QPixmap pixmap = QPixmap::fromImage(image.scaled(ui->lb_show->size(), Qt::KeepAspectRatio));
     this->ui->lb_show->setPixmap(pixmap);
     return;
 }
